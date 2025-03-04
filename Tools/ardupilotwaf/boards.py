@@ -158,10 +158,15 @@ class Board:
             ]
             cfg.msg("Enabled custom controller", 'yes')
         else:
+            env.ENABLE_CUSTOM_CONTROLLER = True
             env.DEFINES.update(
-                AP_CUSTOMCONTROL_ENABLED=0,
+                AP_CUSTOMCONTROL_ENABLED=1,
             )
-            cfg.msg("Enabled custom controller", 'no', color='YELLOW')
+            env.AP_LIBRARIES += [
+                'AC_CustomControl',
+                'AC_CustomControl/AC_ADRC'
+            ]
+            cfg.msg("Enabled custom controller", 'yes')
 
         # support enabling any option in build_options.py
         for opt in build_options.BUILD_OPTIONS:
