@@ -2,4 +2,4 @@ include ../Pogo-CANGPS/hwdef-bl.dat
 
 undef CAN_APP_NODE_NAME
 
-define CAN_APP_NODE_NAME "AIROPTIX.CANGPS.M9N"
+define CAN_APP_NODE_NAME "AIROPTIX.CANGPS"

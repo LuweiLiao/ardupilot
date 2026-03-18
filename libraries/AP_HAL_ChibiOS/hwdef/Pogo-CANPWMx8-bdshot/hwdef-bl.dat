@@ -4,7 +4,7 @@
 MCU STM32L431 STM32L431xx
 
 # crystal frequency
-OSCILLATOR_HZ 8000000
+OSCILLATOR_HZ 0
 
 # board ID for firmware load
 APJ_BOARD_ID 1062

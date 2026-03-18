@@ -1,4 +1,4 @@
 include ../Pogo-CANGPS/hwdef-bl.dat
 
 undef CAN_APP_NODE_NAME
-define CAN_APP_NODE_NAME "Pogo-CANGPS-Cube"
+define CAN_APP_NODE_NAME "pogo.cangps"

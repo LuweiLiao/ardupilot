@@ -1,7 +1,7 @@
 include ../Pogo-CANGPS/hwdef.dat
 
 undef CAN_APP_NODE_NAME
-define CAN_APP_NODE_NAME "Pogo-CANGPS-Cube"
+define CAN_APP_NODE_NAME "pogo.cangps"
 
 PA0 TIM2_CH1 TIM2 PWM(1)
 
