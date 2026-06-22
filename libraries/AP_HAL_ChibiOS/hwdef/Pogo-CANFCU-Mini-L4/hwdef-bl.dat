@@ -7,7 +7,7 @@ MCU STM32L431 STM32L431xx
 OSCILLATOR_HZ 0
 
 # board ID for firmware load
-APJ_BOARD_ID 1062
+APJ_BOARD_ID AP_HW_MatekL431
 
 # setup build for a peripheral firmware
 env AP_PERIPH 1
@@ -51,4 +51,5 @@ define HAL_DISABLE_LOOP_DELAY
 PA13 JTMS-SWDIO SWD
 PA14 JTCK-SWCLK SWD
 
+define HAL_CAN_DEFAULT_NODE_ID 11
 define CAN_APP_NODE_NAME "pogo.canfcu.mini.l4"
