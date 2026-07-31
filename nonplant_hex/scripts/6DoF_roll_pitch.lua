@@ -64,8 +64,8 @@ function update() -- this is the loop which periodically runs
   if not motors_spinning and current_motors_spinning then
     -- Just armed or removed E-stop
     -- capture the current attitude as the base, then add configured offsets
-    base_roll = math.deg(ahrs:get_roll())
-    base_pitch = math.deg(ahrs:get_pitch())
+    base_roll = math.deg(ahrs:get_roll_rad())
+    base_pitch = math.deg(ahrs:get_pitch_rad())
     apply_offsets(true)
 
     if sw then
