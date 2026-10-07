@@ -118,7 +118,7 @@ void SITL_State::init(int argc, char * const argv[]) {
 
     printf("Running Instance: %d\n", _instance);
 
-    sitl_model = NEW_NOTHROW SimMCast("");
+    sitl_model = NEW_NOTHROW SimMCast("", _instance);
 
     _sitl = AP::sitl();
 
@@ -146,7 +146,7 @@ void SITL_State::wait_clock(uint64_t wait_time_usec)
  */
 void SimMCast::multicast_open(void)
 {
-    if (!sock.connect(SITL_MCAST_IP, SITL_MCAST_PORT)) {
+    if (!sock.connect(SITL_MCAST_IP, SITL_MCAST_PORT + 2U * instance)) {
         fprintf(stderr, "multicast socket failed - %s\n", strerror(errno));
         exit(1);
     }
@@ -165,7 +165,7 @@ void SimMCast::servo_fd_open(void)
     if (in_addr == nullptr) {
         return;
     }
-    if (!servo_sock.connect(in_addr, SITL_SERVO_PORT)) {
+    if (!servo_sock.connect(in_addr, SITL_SERVO_PORT + 2U * instance)) {
         fprintf(stderr, "servo socket failed - %s\n", strerror(errno));
         exit(1);
     }
@@ -232,8 +232,9 @@ void SimMCast::multicast_read(void)
     }
 }
 
-SimMCast::SimMCast(const char *frame_str) :
-    Aircraft(frame_str)
+SimMCast::SimMCast(const char *frame_str, uint8_t instance_id) :
+    Aircraft(frame_str),
+    instance(instance_id)
 {
     multicast_open();
 }

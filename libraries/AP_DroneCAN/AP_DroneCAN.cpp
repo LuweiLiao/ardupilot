@@ -172,6 +172,14 @@ const AP_Param::GroupInfo AP_DroneCAN::var_info[] = {
     AP_GROUPINFO("RLY_RT", 23, AP_DroneCAN, _relay.rate_hz, 0),
 #endif
 
+    // @Param: SB_NOD
+    // @DisplayName: Trusted standby coordinator node
+    // @Description: Node permitted to broadcast project-specific standby commands. Zero disables it. Only one DroneCAN driver may manage standby. Node ID is not cryptographic authentication.
+    // @Range: 0 125
+    // @RebootRequired: True
+    // @User: Advanced
+    AP_GROUPINFO("SB_NOD", 24, AP_DroneCAN, _standby_node, 0),
+
 #if AP_DRONECAN_SERIAL_ENABLED
     /*
       due to the parameter tree depth limitation we can't use a sub-table for the serial parameters
@@ -272,6 +280,8 @@ const AP_Param::GroupInfo AP_DroneCAN::var_info[] = {
 #endif // AP_DRONECAN_SERIAL_ENABLED
 
     // RLY_RT is index 23 but has to be above SER_EN so its not hidden
+
+
 
     AP_GROUPEND
 };
@@ -492,6 +502,15 @@ void AP_DroneCAN::init(uint8_t driver_index, bool enable_filters)
     can_stats.set_timeout_ms(3000);
 
     node_info_server.set_timeout_ms(20);
+    standby_server.set_timeout_ms(20);
+    standby_status_pub.set_timeout_ms(20);
+    standby_status_pub.set_priority(CANARD_TRANSFER_PRIORITY_HIGH);
+    if (_standby_node.get() > 0 && _standby_node.get() <= 125) {
+        // Fail closed if the HAL cannot supply a boot nonce; never reuse a fixed ID.
+        if (!hal.util->get_random_vals((uint8_t *)&_standby.boot_id, sizeof(_standby.boot_id))) {
+            _standby.boot_id = 0;
+        }
+    }
 
     // setup node status
     node_status_msg.health = UAVCAN_PROTOCOL_NODESTATUS_HEALTH_OK;
@@ -540,6 +559,7 @@ void AP_DroneCAN::loop(void)
         send_parameter_save_request();
         send_node_status();
         _dna_server.verify_nodes();
+        send_standby_status();
 
 #if AP_DRONECAN_SEND_GPS && AP_GPS_DRONECAN_ENABLED
         if (option_is_set(AP_DroneCAN::Options::SEND_GNSS) && !AP_GPS_DroneCAN::instance_exists(this)) {

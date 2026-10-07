@@ -1,0 +1,11 @@
+# Project-local broadcast. Only the configured coordinator may send commands.
+# Target node AND receiver boot must match. No wildcard target is permitted.
+uint8 STANDBY = 1
+uint8 ACTIVE = 2
+uint8 target_node_id
+uint8 action
+uint64 boot_id
+uint64 session_id
+uint32 sequence
+# Receiver monotonic milliseconds, at most 500 ms ahead; duplicates never renew it.
+uint32 valid_until_ms

@@ -1,0 +1,15 @@
+# Autonomous 25 Hz status. Receipt is not main-loop application confirmation.
+# Result codes and states match the legacy read-only Standby service.
+uint8 result
+uint8 last_result
+uint8 state
+uint64 boot_id
+uint64 session_id
+uint32 sequence
+uint32 applied_sequence
+uint32 uptime_ms
+uint16 state_age_ms
+# Monotonically increasing within one receiver boot; stale copies cannot refresh health.
+uint32 status_sequence
+# Sequence of the last addressed, authorized command (including rejected commands).
+uint32 command_sequence

@@ -1,0 +1,36 @@
+# Project-local service ID 200; reserve this ID in the deployed network.
+# QUERY=0, STANDBY=1, ACTIVE=2. ACTIVE releases controller standby only;
+# it never grants actuator authority, arms, changes flight mode, or starts motors.
+uint8 QUERY = 0
+uint8 STANDBY = 1
+uint8 ACTIVE = 2
+uint8 action
+uint64 boot_id
+uint64 session_id
+uint32 sequence
+# Deadline in the receiver's uint32 monotonic millisecond clock. Maximum 500 ms ahead.
+uint32 valid_until_ms
+---
+uint8 OK = 0
+uint8 PENDING = 1
+uint8 APPLIED = 2
+uint8 DISABLED = 3
+uint8 UNAUTHORIZED = 4
+uint8 BAD_BOOT = 5
+uint8 BAD_SESSION = 6
+uint8 STALE = 7
+uint8 CONFLICT = 8
+uint8 EXPIRED = 9
+uint8 BUSY = 10
+uint8 INVALID = 11
+uint8 UNSUPPORTED = 12
+uint8 result
+uint8 last_result
+uint8 state
+uint64 boot_id
+uint64 session_id
+uint32 sequence
+uint32 applied_sequence
+uint32 uptime_ms
+# Age of the main-loop state observation; 65535 until the main loop registers.
+uint16 state_age_ms

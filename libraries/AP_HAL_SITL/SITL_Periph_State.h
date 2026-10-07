@@ -26,12 +26,16 @@
 
 class SimMCast : public SITL::Aircraft {
 public:
-    SimMCast(const char *frame_str);
+    SimMCast(const char *frame_str, uint8_t instance);
     void update(const struct sitl_input &input) override;
 
 private:
     SocketAPM_native sock{true};
     SocketAPM_native servo_sock{true};
+
+    // Keep each AP_Periph SITL instance on the matching ArduPilot state and
+    // servo UDP ports. Instance 0 retains the historical default ports.
+    const uint8_t instance;
 
     // offset between multicast timestamp and local timestamp
     uint64_t base_time_us;

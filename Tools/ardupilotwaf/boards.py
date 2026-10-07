@@ -933,6 +933,9 @@ class sitl_periph(sitl):
             HAL_BUILD_AP_PERIPH = 1,
             PERIPH_FW = 1,
             HAL_RAM_RESERVE_START = 0,
+            # AP_Periph SITL uses host SocketCAN endpoints (vcanN).
+            HAL_NUM_CAN_IFACES = 2,
+            HAL_CAN_WITH_SOCKETCAN = 1,
 
             CANARD_ENABLE_CANFD = 1,
             CANARD_ENABLE_TAO_OPTION = 1,

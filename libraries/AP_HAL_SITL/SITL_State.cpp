@@ -532,7 +532,9 @@ void SITL_State::multicast_state_open(void)
 #ifdef HAVE_SOCK_SIN_LEN
     sockaddr.sin_len = sizeof(sockaddr);
 #endif
-    sockaddr.sin_port = htons(SITL_MCAST_PORT);
+    // Keep each SITL instance on its own state multicast port. This prevents
+    // AP_Periph instances from consuming another vehicle's time sequence.
+    sockaddr.sin_port = htons(SITL_MCAST_PORT + 2U * _instance);
     sockaddr.sin_family = AF_INET;
     sockaddr.sin_addr.s_addr = inet_addr(SITL_MCAST_IP);
 
@@ -574,7 +576,7 @@ void SITL_State::multicast_state_open(void)
     }
 
     sockaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-    sockaddr.sin_port = htons(SITL_SERVO_PORT + _instance);
+    sockaddr.sin_port = htons(SITL_SERVO_PORT + 2U * _instance);
 
     ret = bind(servo_in_fd, (struct sockaddr *)&sockaddr, sizeof(sockaddr));
     if (ret == -1) {
@@ -596,7 +598,9 @@ void SITL_State::multicast_state_send(void)
         multicast_state_open();
     }
     const auto &sfdm = _sitl->state;
-    send(mc_out_fd, (void*)&sfdm, sizeof(sfdm), 0);
+    // Ancillary AP_Periph state delivery must not block the simulation clock
+    // when the host's multicast network interface is congested or unavailable.
+    send(mc_out_fd, (void*)&sfdm, sizeof(sfdm), MSG_DONTWAIT);
 
     check_servo_input();
 }

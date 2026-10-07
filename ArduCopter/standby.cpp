@@ -1,4 +1,5 @@
 #include "Copter.h"
+#include <AP_DroneCAN/AP_DroneCAN.h>
 
 // Run standby functions at approximately 100 Hz to limit maximum variable build up
 //
@@ -13,6 +14,14 @@
 //      and landing detection is disabled.
 void Copter::standby_update()
 {
+#if HAL_ENABLE_DRONECAN_DRIVERS
+    for (uint8_t i = 0; i < AP::can().get_num_drivers(); i++) {
+        auto *driver = AP_DroneCAN::get_dronecan(i);
+        if (driver != nullptr) {
+            driver->standby_update(standby_active);
+        }
+    }
+#endif
     if (!standby_active) {
         return;
     }

@@ -101,6 +101,9 @@ public:
     
     uint8_t get_driver_index() const { return _driver_index; }
 
+    // Called only by Copter's main loop; CAN reception never changes PID state.
+    void standby_update(bool &standby);
+
     // define string with length structure
     struct string { uint8_t len; uint8_t data[128]; };
 
@@ -377,6 +380,35 @@ private:
     Canard::ObjCallback<AP_DroneCAN, uavcan_protocol_GetNodeInfoRequest> node_info_req_cb{this, &AP_DroneCAN::handle_node_info_request};
     Canard::Server<uavcan_protocol_GetNodeInfoRequest> node_info_server{canard_iface, node_info_req_cb};
     uavcan_protocol_GetNodeInfoResponse node_info_rsp;
+
+    AP_Int16 _standby_node;
+    HAL_Semaphore _standby_sem;
+    struct {
+        uint64_t boot_id;
+        uint64_t session_id;
+        uint32_t sequence;
+        uint32_t applied_sequence;
+        uint32_t deadline_ms;
+        uint32_t observed_ms;
+        uint8_t action;
+        uint8_t state;
+        uint8_t result;
+        bool pending;
+        bool supported;
+        uint8_t rx_result;
+        uint32_t rx_sequence;
+        uint32_t status_sequence;
+        uint32_t status_ms;
+    } _standby {};
+    void process_standby_command(const CanardRxTransfer&, const pogo_redundancy_StandbyRequest&, pogo_redundancy_StandbyResponse&);
+    void handle_standby_command(const CanardRxTransfer&, const pogo_redundancy_StandbyCommand&);
+    void send_standby_status();
+    Canard::ObjCallback<AP_DroneCAN, pogo_redundancy_StandbyCommand> standby_command_cb{this, &AP_DroneCAN::handle_standby_command};
+    Canard::Subscriber<pogo_redundancy_StandbyCommand> standby_command_listener{standby_command_cb, _driver_index};
+    Canard::Publisher<pogo_redundancy_StandbyStatus> standby_status_pub{canard_iface};
+    void handle_standby_request(const CanardRxTransfer&, const pogo_redundancy_StandbyRequest&);
+    Canard::ObjCallback<AP_DroneCAN, pogo_redundancy_StandbyRequest> standby_cb{this, &AP_DroneCAN::handle_standby_request};
+    Canard::Server<pogo_redundancy_StandbyRequest> standby_server{canard_iface, standby_cb};
 
 #if AP_SCRIPTING_ENABLED
     Canard::ObjCallback<AP_DroneCAN, dronecan_protocol_FlexDebug> FlexDebug_cb{this, &AP_DroneCAN::handle_FlexDebug};
