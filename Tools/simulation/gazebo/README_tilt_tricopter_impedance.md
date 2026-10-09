@@ -46,6 +46,10 @@ cd /home/pix/firmare/llw-apm/tricopter
 Use `-w` on the first run, or after changing startup parameters. Do not use
 `-w` when an existing `eeprom.bin` must be preserved.
 
+The loopback UDP client for SERIAL7 binds its source to `127.0.0.1:9026`
+when connecting to `127.0.0.1:9025`. The rangefinder bridge can send replies
+to this fixed endpoint. This setup supports one SITL instance per host.
+
 Before engaging Impedance mode, verify the two telemetry paths:
 
 ```text

@@ -509,6 +509,23 @@ void UARTDriver::_udp_start_client(const char *address, uint16_t port)
     int one = 1;
     setsockopt(_fd,SOL_SOCKET,SO_BROADCAST,(char *)&one,sizeof(one));
 
+    // Keep the rangefinder MAVLink source endpoint stable for the Gazebo
+    // bridge, which replies to the sender address.
+    if (port == 9025 && sockaddr.sin_addr.s_addr == htonl(INADDR_LOOPBACK)) {
+        struct sockaddr_in local{};
+#ifdef HAVE_SOCK_SIN_LEN
+        local.sin_len = sizeof(local);
+#endif
+        local.sin_family = AF_INET;
+        local.sin_port = htons(9026);
+        local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        setsockopt(_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+        if (bind(_fd, (struct sockaddr *)&local, sizeof(local)) == -1) {
+            fprintf(stderr, "udp bind fixed range source port failed - %s\n", strerror(errno));
+            exit(1);
+        }
+    }
+
     ret = connect(_fd, (struct sockaddr *)&sockaddr, sizeof(sockaddr));
     if (ret == -1) {
         fprintf(stderr, "udp connect failed on port %u - %s\n",
