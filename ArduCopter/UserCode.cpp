@@ -6,18 +6,13 @@ constexpr uint16_t TSDT4_TRIGGER_PWM = 1800U;
 constexpr uint32_t TSDT4_SWITCH_LOW_CONFIRM_MS = 500U;
 
 constexpr float TSDT4_TAKEOFF_HEIGHT_CM = 200.0f;
-// Keep the Round5 takeoff command unchanged while the landing phase boundary
-// is tested as the only control-logic change in this run.
-constexpr float TSDT4_TAKEOFF_PITCH_RAD = radians(-0.5f);
-constexpr float TSDT4_TAKEOFF_CLIMB_RATE_CMS = 15.0f;
-constexpr uint32_t TSDT4_TAKEOFF_BLEND_MS = 1000U;
+// [Cybernetics Ch.4] Keep XY closed by the native Guided position controller
+// while the vertical reference follows a smooth, zero-slope profile.
+constexpr uint32_t TSDT4_TAKEOFF_PROFILE_MS = 25000U;
 constexpr uint32_t TSDT4_TAKEOFF_LEVEL_MS = 1000U;
 constexpr uint32_t TSDT4_TAKEOFF_TIMEOUT_MS = 30000U;
 
-// The fixed post-contact command is intentionally independent of XY error and
-// velocity.  Attitude magnitude is not itself a pass/fail criterion; command
-// continuity, touchdown, and natural final rest are.
-constexpr float TSDT4_LAND_PITCH_RAD = radians(4.0f);
+// Keep the pre-contact descent slow and finish with native landing detection.
 constexpr float TSDT4_LAND_CLIMB_RATE_CMS = -5.0f;
 constexpr uint32_t TSDT4_LAND_BLEND_MS = 1000U;
 constexpr uint32_t TSDT4_CONTACT_ARM_DELAY_MS = 1500U;
@@ -26,6 +21,31 @@ constexpr float TSDT4_CONTACT_ACCEL_Z_MSS = 0.18f;
 constexpr uint8_t TSDT4_CONTACT_CONFIRM_SAMPLES = 2U;
 constexpr float TSDT4_AIRFRAME_LAND_GATE_Z_CM = 60.0f;
 constexpr uint32_t TSDT4_LAND_TIMEOUT_MS = 90000U;
+constexpr float TSDT4_TOOL_CONTACT_RISE_CM = 146.7f;
+constexpr uint32_t TSDT4_TROCHOID_PROFILE_MS = 30000U;
+constexpr float TSDT4_TROCHOID_END_DEG = -22.85f;
+constexpr uint8_t TSDT4_TROCHOID_POINTS = 24U;
+// Let the passive hinge respond before commanding the horizontal component
+// that otherwise drags the tool across the ground.
+constexpr float TSDT4_FOLD_X_GATE_DROP_CM = 3.0f;
+
+// Mesh-derived support envelope.  The offsets are relative to the 90 deg
+// tool-contact pose and follow the measured finite support, rather than an
+// ideal circle.  x is along the launch heading and z is NEU-up height.
+constexpr float TSDT4_TROCHOID_ANGLE_DEG[TSDT4_TROCHOID_POINTS] = {
+    90.0f, 85.0f, 80.0f, 75.0f, 70.0f, 65.0f, 60.0f, 55.0f,
+    50.0f, 45.0f, 40.0f, 35.0f, 30.0f, 25.0f, 20.0f, 15.0f,
+    10.0f, 5.0f, 0.0f, -5.0f, -10.0f, -15.0f, -20.0f, -22.85f};
+constexpr float TSDT4_TROCHOID_X_CM[TSDT4_TROCHOID_POINTS] = {
+       0.0000f,  -14.4999f,  -28.8920f,  -43.0939f,  -57.1424f,  -70.9780f,
+     -84.5225f,  -97.7009f, -110.4416f, -122.6739f, -134.3340f, -145.3646f,
+    -155.7204f, -165.3662f, -174.2699f, -182.4040f, -189.7502f, -196.2932f,
+    -202.0244f, -206.9438f, -211.0529f, -214.3642f, -216.8941f, -217.9940f};
+constexpr float TSDT4_TROCHOID_Z_CM[TSDT4_TROCHOID_POINTS] = {
+       0.0000f,   -0.6233f,   -2.4815f,   -4.4584f,   -6.4561f,   -9.3414f,
+     -13.1252f,  -17.7236f,  -23.1603f,  -29.3489f,  -36.2700f,  -43.7524f,
+     -51.7046f,  -60.0285f,  -68.7170f,  -77.6313f,  -86.7777f,  -96.0259f,
+     -105.3496f, -114.6542f, -123.8707f, -132.9505f, -141.7792f, -146.6969f};
 
 enum class TsdT4State : uint8_t {
     IDLE,
@@ -40,15 +60,14 @@ enum class TsdT4State : uint8_t {
 TsdT4State tsdt4_state = TsdT4State::IDLE;
 Vector3f tsdt4_start_neu_cm;
 Vector3f tsdt4_land_hold_neu_cm;
+Vector3f tsdt4_fold_start_neu_cm;
 float tsdt4_start_yaw_rad;
-float tsdt4_takeoff_initial_roll_rad;
-float tsdt4_takeoff_initial_pitch_rad;
-float tsdt4_land_initial_roll_rad;
-float tsdt4_land_initial_pitch_rad;
 uint32_t tsdt4_takeoff_start_ms;
 uint32_t tsdt4_level_start_ms;
 uint32_t tsdt4_land_start_ms;
-uint32_t tsdt4_land_angle_start_ms;
+uint32_t tsdt4_fold_start_ms;
+float tsdt4_fold_x_gate_s;
+bool tsdt4_fold_x_gate_open;
 float tsdt4_land_start_z_cm;
 uint8_t tsdt4_contact_accel_count;
 bool tsdt4_trigger_high;
@@ -71,12 +90,64 @@ float smoothstep5_integral(const float value)
     return 2.5f * s4 - 3.0f * s4 * s + s4 * s2;
 }
 
-Quaternion attitude_target(const float roll_rad, const float pitch_rad,
-                           const float yaw_rad)
+float smoothstep5_derivative(const float value)
 {
-    Quaternion attitude_quat;
-    attitude_quat.from_euler(roll_rad, pitch_rad, yaw_rad);
-    return attitude_quat;
+    const float s = constrain_float(value, 0.0f, 1.0f);
+    return 30.0f * s * s * (1.0f - s) * (1.0f - s);
+}
+
+void tsdt4_trochoid_offsets(const float angle_deg, float &x_cm,
+                            float &z_cm)
+{
+    const float q = constrain_float(angle_deg, TSDT4_TROCHOID_END_DEG, 90.0f);
+    if (q >= TSDT4_TROCHOID_ANGLE_DEG[0]) {
+        x_cm = TSDT4_TROCHOID_X_CM[0];
+        z_cm = TSDT4_TROCHOID_Z_CM[0];
+        return;
+    }
+    for (uint8_t i = 0U; i + 1U < TSDT4_TROCHOID_POINTS; i++) {
+        if (q <= TSDT4_TROCHOID_ANGLE_DEG[i] &&
+            q >= TSDT4_TROCHOID_ANGLE_DEG[i + 1U]) {
+            const float span = TSDT4_TROCHOID_ANGLE_DEG[i] -
+                               TSDT4_TROCHOID_ANGLE_DEG[i + 1U];
+            const float blend =
+                (TSDT4_TROCHOID_ANGLE_DEG[i] - q) / span;
+            x_cm = TSDT4_TROCHOID_X_CM[i] +
+                   (TSDT4_TROCHOID_X_CM[i + 1U] -
+                    TSDT4_TROCHOID_X_CM[i]) * blend;
+            z_cm = TSDT4_TROCHOID_Z_CM[i] +
+                   (TSDT4_TROCHOID_Z_CM[i + 1U] -
+                    TSDT4_TROCHOID_Z_CM[i]) * blend;
+            return;
+        }
+    }
+    x_cm = TSDT4_TROCHOID_X_CM[TSDT4_TROCHOID_POINTS - 1U];
+    z_cm = TSDT4_TROCHOID_Z_CM[TSDT4_TROCHOID_POINTS - 1U];
+}
+
+void tsdt4_trochoid_reference(const float profile_s, float &x_cm, float &z_cm,
+                              float &vx_cms, float &vz_cms)
+{
+    const float s = constrain_float(profile_s, 0.0f, 1.0f);
+    const float lambda = smoothstep5(s);
+    const float angle_deg =
+        90.0f + (TSDT4_TROCHOID_END_DEG - 90.0f) * lambda;
+    tsdt4_trochoid_offsets(angle_deg, x_cm, z_cm);
+
+    const float eps = 0.001f;
+    float x_plus, z_plus, x_minus, z_minus;
+    tsdt4_trochoid_offsets(
+        90.0f + (TSDT4_TROCHOID_END_DEG - 90.0f) *
+                     smoothstep5(s + eps),
+        x_plus, z_plus);
+    tsdt4_trochoid_offsets(
+        90.0f + (TSDT4_TROCHOID_END_DEG - 90.0f) *
+                     smoothstep5(s - eps),
+        x_minus, z_minus);
+    // The finite difference already includes the quintic phase derivative.
+    const float ds_dt = 1.0f / (TSDT4_TROCHOID_PROFILE_MS * 0.001f);
+    vx_cms = (x_plus - x_minus) / (2.0f * eps) * ds_dt;
+    vz_cms = (z_plus - z_minus) / (2.0f * eps) * ds_dt;
 }
 
 } // namespace
@@ -152,8 +223,6 @@ void Copter::userhook_MediumLoop()
         } else {
             tsdt4_start_neu_cm = inertial_nav.get_position_neu_cm();
             tsdt4_start_yaw_rad = ahrs.get_yaw();
-            tsdt4_takeoff_initial_roll_rad = ahrs.get_roll();
-            tsdt4_takeoff_initial_pitch_rad = ahrs.get_pitch();
             tsdt4_takeoff_start_ms = now_ms;
 
             // [Cybernetics Ch.4] Close the ground-to-flight transition once;
@@ -184,58 +253,53 @@ void Copter::userhook_MediumLoop()
         return;
     }
 
-    const Vector3f no_angular_velocity{};
-
     if (tsdt4_state == TsdT4State::TAKEOFF_ANGLE) {
         const uint32_t elapsed_ms = now_ms - tsdt4_takeoff_start_ms;
-        const float blend = smoothstep5(
-            elapsed_ms / float(TSDT4_TAKEOFF_BLEND_MS));
-        const float roll_rad =
-            tsdt4_takeoff_initial_roll_rad * (1.0f - blend);
-        const float pitch_rad =
-            tsdt4_takeoff_initial_pitch_rad +
-            (TSDT4_TAKEOFF_PITCH_RAD - tsdt4_takeoff_initial_pitch_rad) *
-                blend;
-        const float climb_rate_cms = TSDT4_TAKEOFF_CLIMB_RATE_CMS * blend;
+        const float profile = smoothstep5(
+            elapsed_ms / float(TSDT4_TAKEOFF_PROFILE_MS));
+        const float profile_rate = smoothstep5_derivative(
+            elapsed_ms / float(TSDT4_TAKEOFF_PROFILE_MS));
+        Vector3f takeoff_target_neu_cm = tsdt4_start_neu_cm;
+        takeoff_target_neu_cm.z += TSDT4_TAKEOFF_HEIGHT_CM * profile;
+        Vector3f takeoff_velocity_cms{};
+        takeoff_velocity_cms.z =
+            (TSDT4_TAKEOFF_HEIGHT_CM * 1000.0f /
+             float(TSDT4_TAKEOFF_PROFILE_MS)) * profile_rate;
 
-        // [Cybernetics Ch.4] Guided Angle is refreshed at 10 Hz; no XY
-        // position or velocity enters this fixed attitude command.
-        mode_guided.set_angle(
-            attitude_target(roll_rad, pitch_rad, tsdt4_start_yaw_rad),
-            no_angular_velocity, climb_rate_cms, false);
+        // [Cybernetics Ch.4] Position/velocity feedback retains XY at the
+        // launch point while the quintic Z reference avoids a step in climb.
+        if (!mode_guided.set_destination_posvel(
+                takeoff_target_neu_cm, takeoff_velocity_cms, true,
+                degrees(tsdt4_start_yaw_rad) * 100.0f, false, 0.0f, false)) {
+            tsdt4_state = TsdT4State::ABORT;
+            gcs().send_text(MAV_SEVERITY_WARNING,
+                            "TSDT4: takeoff position profile rejected");
+            return;
+        }
 
-        if (inertial_nav.get_position_neu_cm().z >=
-            tsdt4_start_neu_cm.z + TSDT4_TAKEOFF_HEIGHT_CM) {
+        if (elapsed_ms >= TSDT4_TAKEOFF_PROFILE_MS) {
             tsdt4_level_start_ms = now_ms;
             tsdt4_state = TsdT4State::TAKEOFF_LEVEL;
         } else if (elapsed_ms >= TSDT4_TAKEOFF_TIMEOUT_MS) {
-            const Vector3f hold_neu_cm = inertial_nav.get_position_neu_cm();
-            const bool hold_set = mode_guided.set_destination(
-                hold_neu_cm, true, degrees(tsdt4_start_yaw_rad) * 100.0f,
-                false, 0.0f, false, false);
             tsdt4_state = TsdT4State::ABORT;
             gcs().send_text(MAV_SEVERITY_WARNING,
-                            hold_set ?
-                            "TSDT4: takeoff timeout, position abort" :
-                            "TSDT4: takeoff timeout, hold rejected");
+                            "TSDT4: takeoff timeout, position abort");
         }
         return;
     }
 
     if (tsdt4_state == TsdT4State::TAKEOFF_LEVEL) {
         const uint32_t elapsed_ms = now_ms - tsdt4_level_start_ms;
-        const float blend = smoothstep5(
-            elapsed_ms / float(TSDT4_TAKEOFF_LEVEL_MS));
-        const float pitch_rad = TSDT4_TAKEOFF_PITCH_RAD * (1.0f - blend);
-        const float climb_rate_cms =
-            TSDT4_TAKEOFF_CLIMB_RATE_CMS * (1.0f - blend);
-
-        mode_guided.set_angle(
-            attitude_target(0.0f, pitch_rad, tsdt4_start_yaw_rad),
-            no_angular_velocity, climb_rate_cms, false);
+        Vector3f hold_neu_cm = tsdt4_start_neu_cm;
+        hold_neu_cm.z += TSDT4_TAKEOFF_HEIGHT_CM;
+        Vector3f hold_velocity_cms{};
+        // [Cybernetics Ch.4] Re-enter the zero-velocity position loop with a
+        // continuous target after the takeoff profile reaches its endpoint.
+        mode_guided.set_destination_posvel(
+            hold_neu_cm, hold_velocity_cms, true,
+            degrees(tsdt4_start_yaw_rad) * 100.0f, false, 0.0f, false);
 
         if (elapsed_ms >= TSDT4_TAKEOFF_LEVEL_MS) {
-            const Vector3f hold_neu_cm = inertial_nav.get_position_neu_cm();
             if (mode_guided.set_destination(
                     hold_neu_cm, true,
                     degrees(tsdt4_start_yaw_rad) * 100.0f,
@@ -330,20 +394,21 @@ void Copter::userhook_MediumLoop()
             tsdt4_contact_accel_count = 0U;
         }
 
-        if (tsdt4_contact_accel_count >= TSDT4_CONTACT_CONFIRM_SAMPLES) {
-            // [Cybernetics Ch.4] Preserve command continuity across the phase
-            // boundary by starting Angle from the native Position controller's
-            // outgoing attitude target, not instantaneous tracking error.
-            const Vector3f position_attitude_target_rad =
-                attitude_control->get_att_target_euler_rad();
-            tsdt4_land_initial_roll_rad = position_attitude_target_rad.x;
-            tsdt4_land_initial_pitch_rad = position_attitude_target_rad.y;
-            tsdt4_land_angle_start_ms = now_ms;
+        // [Cybernetics Ch.4] Geometry starts folding before a slow contact can
+        // accumulate a large vertical tracking error; no contact force is used.
+        if (tsdt4_contact_accel_count >= TSDT4_CONTACT_CONFIRM_SAMPLES ||
+            descent_target_neu_cm.z <=
+                tsdt4_start_neu_cm.z + TSDT4_TOOL_CONTACT_RISE_CM + 2.0f) {
+            // [Cybernetics Ch.4] Anchor the geometric fold to the measured
+            // body pose at the phase boundary so the first command is
+            // continuous even when the slow descent has tracking error.
+            tsdt4_fold_start_neu_cm = inertial_nav.get_position_neu_cm();
+            tsdt4_fold_start_ms = now_ms;
+            tsdt4_fold_x_gate_s = 0.0f;
+            tsdt4_fold_x_gate_open = false;
             tsdt4_state = TsdT4State::LAND_ANGLE;
             gcs().send_text(MAV_SEVERITY_INFO,
-                            "TSDT4: landing contact detected");
-            gcs().send_text(MAV_SEVERITY_INFO,
-                            "TSDT4: landing angle started");
+                            "TSDT4: landing fold started");
         } else if (elapsed_ms >= TSDT4_LAND_TIMEOUT_MS) {
             if (tsdt4_force_flying_owned) {
                 force_flying = false;
@@ -358,20 +423,89 @@ void Copter::userhook_MediumLoop()
     }
 
     if (tsdt4_state == TsdT4State::LAND_ANGLE) {
-        const uint32_t elapsed_ms = now_ms - tsdt4_land_angle_start_ms;
         const uint32_t total_landing_ms = now_ms - tsdt4_land_start_ms;
+        const uint32_t fold_elapsed_ms = now_ms - tsdt4_fold_start_ms;
+        const float profile_s = fold_elapsed_ms * 0.001f /
+                                (TSDT4_TROCHOID_PROFILE_MS * 0.001f);
+        float x_offset_cm;
+        float z_height_offset_cm;
+        float vx_heading_cms;
+        float vz_height_cms;
+        tsdt4_trochoid_reference(profile_s, x_offset_cm,
+                                 z_height_offset_cm, vx_heading_cms,
+                                 vz_height_cms);
 
-        const float blend = smoothstep5(
-            elapsed_ms / float(TSDT4_LAND_BLEND_MS));
-        const float roll_rad =
-            tsdt4_land_initial_roll_rad * (1.0f - blend);
-        const float pitch_rad =
-            tsdt4_land_initial_pitch_rad +
-            (TSDT4_LAND_PITCH_RAD - tsdt4_land_initial_pitch_rad) * blend;
+        // Hold the horizontal reference while the passive hinge is still
+        // locked at its hanging pose.  Once the body has descended through
+        // the measured geometric gate, remap the horizontal quintic so it
+        // starts at zero and still reaches the complete endpoint.
+        const float current_z_cm = inertial_nav.get_position_neu_cm().z;
+        if (!tsdt4_fold_x_gate_open &&
+            current_z_cm <=
+                tsdt4_fold_start_neu_cm.z - TSDT4_FOLD_X_GATE_DROP_CM) {
+            tsdt4_fold_x_gate_open = true;
+            tsdt4_fold_x_gate_s = profile_s;
+            gcs().send_text(MAV_SEVERITY_INFO,
+                            "TSDT4: fold translation gate open");
+        }
+        if (!tsdt4_fold_x_gate_open) {
+            x_offset_cm = 0.0f;
+            vx_heading_cms = 0.0f;
+        } else {
+            const float gate_lambda =
+                smoothstep5(tsdt4_fold_x_gate_s);
+            const float path_lambda = smoothstep5(profile_s);
+            const float remaining = MAX(1.0f - gate_lambda, 0.001f);
+            const float remapped = constrain_float(
+                (path_lambda - gate_lambda) / remaining, 0.0f, 1.0f);
+            const float remapped_rate =
+                smoothstep5_derivative(remapped) *
+                smoothstep5_derivative(profile_s) / remaining;
+            const float final_x_cm =
+                TSDT4_TROCHOID_X_CM[TSDT4_TROCHOID_POINTS - 1U];
+            x_offset_cm = final_x_cm * smoothstep5(remapped);
+            vx_heading_cms = final_x_cm * remapped_rate /
+                             (TSDT4_TROCHOID_PROFILE_MS * 0.001f);
+        }
 
-        mode_guided.set_angle(
-            attitude_target(roll_rad, pitch_rad, tsdt4_start_yaw_rad),
-            no_angular_velocity, TSDT4_LAND_CLIMB_RATE_CMS, false);
+        const float yaw_cos = cosf(tsdt4_start_yaw_rad);
+        const float yaw_sin = sinf(tsdt4_start_yaw_rad);
+        Vector3f fold_target_neu_cm = tsdt4_fold_start_neu_cm;
+        fold_target_neu_cm.x += x_offset_cm * yaw_cos;
+        fold_target_neu_cm.y += x_offset_cm * yaw_sin;
+        // The envelope is expressed as a decrease in body height.  NEU z is
+        // positive up, so the negative envelope offset is used directly.
+        fold_target_neu_cm.z += z_height_offset_cm;
+        Vector3f fold_velocity_cms{};
+        fold_velocity_cms.x = vx_heading_cms * yaw_cos;
+        fold_velocity_cms.y = vx_heading_cms * yaw_sin;
+        fold_velocity_cms.z = vz_height_cms;
+
+        // [Cybernetics Ch.4] A fixed endpoint can hold thrust above the floor.
+        // Continue a smooth slow descent until the native detector disarms.
+        if (fold_elapsed_ms > TSDT4_TROCHOID_PROFILE_MS) {
+            const float terminal_s =
+                (fold_elapsed_ms - TSDT4_TROCHOID_PROFILE_MS) * 0.001f;
+            const float blend_s = TSDT4_LAND_BLEND_MS * 0.001f;
+            fold_target_neu_cm.z += TSDT4_LAND_CLIMB_RATE_CMS *
+                (blend_s * smoothstep5_integral(terminal_s / blend_s) +
+                 MAX(terminal_s - blend_s, 0.0f));
+            fold_velocity_cms.z = TSDT4_LAND_CLIMB_RATE_CMS *
+                smoothstep5(terminal_s / blend_s);
+        }
+
+        // [Cybernetics Ch.4] Keep the landing loop closed around the measured
+        // trochoid reference.  Position and velocity share the same smooth
+        // quintic phase, so the passive joint is driven without a command
+        // step or a fixed-pitch impulse.
+        if (!mode_guided.set_destination_posvel(
+                fold_target_neu_cm, fold_velocity_cms, true,
+                degrees(tsdt4_start_yaw_rad) * 100.0f, false, 0.0f, false)) {
+            tsdt4_state = TsdT4State::ABORT;
+            gcs().send_text(MAV_SEVERITY_WARNING,
+                            "TSDT4: fold position rejected");
+            return;
+        }
 
         if (total_landing_ms >= TSDT4_LAND_TIMEOUT_MS) {
             if (tsdt4_force_flying_owned) {
